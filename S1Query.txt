@@ -1,26 +1,64 @@
+Zero rows is `expand()` dropping the event. That happens when `json_object_value(message, 'LLMEventData')` returns nothing. On this source `LLMEventData` is already a **parsed object** (`{` in the UI). It is not a key you peel out of `message`. The Operation filter can also wipe the set if those scalars are not on `Microsoft Copilot`.
+
+Run these in order. Stop at the first one that returns rows.
+
+**1. Prove the parsed file field exists**
+
+```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
-(Operation = 'CopilotInteraction' OR unmapped.Operation = 'CopilotInteraction' OR RecordType = 261 OR unmapped.RecordType = 261)
-message contains 'AccessedResources'
-| let llm = json_object_value(message, 'LLMEventData')
-| let files = json_object_value(llm, 'AccessedResources')
+LLMEventData.AccessedResources.Name = *
+| group n=count()
+```
+
+If this is 0, the path is `unmapped.LLMEventData.AccessedResources.Name` or `CopilotEventData` instead. Try the same count on those names.
+
+**2. Explode the parsed array (not `message`)**
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources.Name = *
+| let files = LLMEventData.AccessedResources
 | let file = files.expand()
 | let FileName = json_object_value(file, 'Name')
 | let Action = json_object_value(file, 'Action')
 | let SiteUrl = json_object_value(file, 'SiteUrl')
 | let FileType = json_object_value(file, 'Type')
-| let FileId = json_object_value(file, 'ID')
-| let LabelId = json_object_value(file, 'SensitivityLabelId')
-| columns timestamp, UserId, FileName, Action, FileType, SiteUrl, FileId, LabelId
+| columns timestamp, FileName, Action, FileType, SiteUrl
 | sort -timestamp
-| limit 500
+| limit 200
+```
 
-If llm is empty, LLMEventData is already a parsed field. Use that instead of message:
+**3. If 2 is still 0, the array is a JSON string**
 
-| let files = json_object_value(LLMEventData, 'AccessedResources')
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources.Name = *
+| let files = array_from_json(LLMEventData.AccessedResources)
 | let file = files.expand()
+| let FileName = json_object_value(file, 'Name')
+| let Action = json_object_value(file, 'Action')
+| let SiteUrl = json_object_value(file, 'SiteUrl')
+| columns timestamp, FileName, Action, SiteUrl
+| sort -timestamp
+| limit 200
+```
 
-If FileId is empty, the JSON key is Id not ID. Retry that one json_object_value.
-Writes:
+**4. If 2 and 3 are 0, pull every `Name` out of the blob**
 
-| filter Action = 'Create' OR Action = 'Modify' OR Action contains 'Write'
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources.Name = *
+| let names = message.extract_matches('"Name":"([^"]+)"')
+| let FileName = names.expand()
+| columns timestamp, FileName
+| sort -timestamp
+| limit 200
+```
+
+Query 1 should match the volume you already see for “first file only.” Queries 2–4 should return **more** rows than 1 when a prompt touched multiple files.
+
+Do not put `Operation = 'CopilotInteraction'` back in until 1 is non-zero. That filter is what zeroed the last query if this source does not expose `Operation` as a scalar.
