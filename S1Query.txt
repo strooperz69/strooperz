@@ -241,7 +241,9 @@ If `City` / `Country` come back empty, the parser may have flattened them (`City
 
 To keep rows with a country but no city, drop `| filter !isempty(City)`.
 
-Same explode, group by client IP. The field you named is `CloudAppEvents.IPAdress` (one `d`). If the column is empty, the parser may use `IPAddress`.
+`CloudAppEvents.IPAdress` is a Defender/MCAS name. This source does not expose it to PowerQuery, so every row died in `filter !isempty(IP)` and you got 503 raw hits (the initial filter still matched) and 0 PQ rows.
+
+Use `RawEventData.ClientIP`:
 
 ```
 tag != 'logVolume'
@@ -249,7 +251,7 @@ dataSource.name = 'Microsoft Copilot'
 LLMEventData.AccessedResources[*].Name = *
 | let names = LLMEventData.AccessedResources[*].Name
 | let FileName = names.expand()
-| let IP = CloudAppEvents.IPAdress
+| let IP = RawEventData.ClientIP
 | filter FileName = *
 | filter !isempty(FileName)
 | filter !(FileName = 'null')
@@ -258,13 +260,8 @@ LLMEventData.AccessedResources[*].Name = *
 | sort -n
 ```
 
-If `IP` is empty, change the `let` to:
-
-```
-| let IP = CloudAppEvents.IPAddress
-```
-
 `n` = file-access events from that IP. `files` = distinct names. Time picker still sets the window.
 
+Same rule as `AppIdentity`: only group on a field you have already seen populated in Event Search on **this** source.
 
 
