@@ -264,4 +264,36 @@ LLMEventData.AccessedResources[*].Name = *
 
 Same rule as `AppIdentity`: only group on a field you have already seen populated in Event Search on **this** source.
 
+Same file explode. `User` and `AppIdentity` are on the **prompt**, so they copy onto every file row. One row = one person, one file, one Copilot host.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let FileName = names.expand()
+| let User = UserId ? UserId : unmapped.UserId
+| let App = AppIdentity ? AppIdentity : LLMEventData.AppIdentity
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter !isempty(User)
+| filter !isempty(App)
+| columns timestamp, User, FileName, App
+| sort -timestamp
+```
+
+Time picker sets the window. No `| limit`.
+
+If `User` is empty, open one event and put that field in `let User =` (`RawEventData.UserId`, `ActorName`, and so on). Do not use `= *` inside `let`.
+
+**Volume for each trio** (how often that user used that app on that file):
+
+```
+| group n=count() by User, FileName, App
+| sort -n
+```
+
+Use the first query to read the story. Use the `group` query when you only need counts.
+
 
