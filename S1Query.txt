@@ -79,3 +79,49 @@ If you only need totals in that day, skip the row list:
 ```
 
 That is smaller and will not hit the row cap as fast.
+
+TOP FILES ACCESSED?
+Same explode, then **count rows per file**. Each exploded row is one Copilot access of that file in the Event Search window. Highest `n` is the hotspot.
+
+**Top files (all actions rolled together)**
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
+| let row = pair.expand()
+| let parts = row.split('~~~')
+| let FileName = parts.get(0)
+| let Action = parts.get(1)
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| group n=count() by FileName
+| sort -n
+| limit 50
+```
+
+Set the picker to 24 hours. `| limit 50` here means **top 50 files**, not 50 events. Raise or drop it if you want a longer leaderboard.
+
+Event Search will chart `n` if you graph that column. The first row is the file Copilot hit most often in that window.
+
+**Same list, split by Read vs Create vs Modify**
+
+Replace the `group` line with:
+
+```
+| group n=count() by FileName, Action
+| sort -n
+| limit 50
+```
+
+Same file can appear more than once, once per action.
+
+**Name collision:** `Document1.docx` in two sites counts as one file. If you need that split, zip `SiteUrl` in as a third `~~~` piece (`get(2)`) and `group n=count() by FileName, SiteUrl`.
+
+
+
+
