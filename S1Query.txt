@@ -47,7 +47,9 @@ If `names` is a string, wrap both in `array_from_json(...)` before `zip`.
 
 A five-file prompt should produce **five rows**. After `expand()`, `count()` is files, not Copilot turns.
 
-Zip keeps `Name` and `Action` on the same file. Split that pair after `expand()` so each is its own column. Do not `expand()` the two arrays separately; that cross-joins every name with every action.
+`split('||')` is a regex split. `|` means OR, so `||` splits the string into **single characters**. First piece is empty (S1 shows `-`). Second piece is one letter, which is why Action looked random.
+
+Use a delimiter that is not a regex metacharacter:
 
 ```
 tag != 'logVolume'
@@ -55,9 +57,9 @@ dataSource.name = 'Microsoft Copilot'
 LLMEventData.AccessedResources[*].Name = *
 | let names = LLMEventData.AccessedResources[*].Name
 | let actions = LLMEventData.AccessedResources[*].Action
-| let pair = names.zip(actions, func(n, a) -> format("%s||%s", n, a))
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
 | let row = pair.expand()
-| let parts = row.split('||')
+| let parts = row.split('~~~')
 | let FileName = parts.get(0)
 | let Action = parts.get(1)
 | columns timestamp, FileName, Action
@@ -65,6 +67,6 @@ LLMEventData.AccessedResources[*].Name = *
 | limit 200
 ```
 
-If `get` errors, use `array_get(parts, 0)` and `array_get(parts, 1)`.
+If `get` fails, use `array_get(parts, 0)` and `array_get(parts, 1)`.
 
-Same idea for `SiteUrl`: zip a third time into the format string (`%s||%s||%s`) and `get(2)`.
+Do not put `|` in the delimiter. Do not `expand()` `names` and `actions` on separate lines; that cross-joins them.
