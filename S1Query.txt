@@ -1,78 +1,54 @@
-`[*]` is the only accessor PowerQuery accepts on that flattened array. `[0]`, `[5]`, and the unindexed `.Name` path are display keys, not query fields.
+You can remove `| limit 200`. The Event Search time picker already sets the window (Last 24 hours). `limit` does not mean “24 hours.” It means “stop after this many **rows**,” and after this query those rows are **files**, not Copilot prompts. Leave the picker on 24 hours and drop the limit if you want every file in that window. The console may still cap how many rows it draws (often a few thousand). If the UI says results were truncated, export or `| group` instead of listing every row.
 
-`group by LLMEventData.AccessedResources[*].Name` still usually returns **one cell per event**, JSON-wrapped, like `["a.docx","b.docx"]`. It is not one row per file yet.
+What each line does:
 
-Explode that wildcard into rows:
+**`tag != 'logVolume'`**  
+SDL writes extra accounting rows under the same source (`tag = 'logVolume'`). They are ingest meters, not Copilot. This drops them so a count is real file access, not billing noise.
 
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources[*].Name = *
-| let names = LLMEventData.AccessedResources[*].Name
-| let FileName = names.expand()
-| columns timestamp, FileName
-| sort -timestamp
-| limit 200
-```
+**`dataSource.name = 'Microsoft Copilot'`**  
+Only that lake source. Other sources (Netskope, EDR, the old `Azure` hub name) stay out.
 
-If `FileName` is still a JSON array string, parse then explode:
+**`LLMEventData.AccessedResources[*].Name = *`**  
+Keep events that have at least one grounding file name. `[*]` is the wildcard S1 allows on that array. `[0]`, `[5]`, and a bare `.Name` are viewer labels, not something PowerQuery can loop. `= *` means “this field is present,” not a search for the character `*`.
 
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources[*].Name = *
-| let names = array_from_json(LLMEventData.AccessedResources[*].Name)
-| let FileName = names.expand()
-| columns timestamp, FileName
-| sort -timestamp
-| limit 200
-```
+**`| let names = LLMEventData.AccessedResources[*].Name`**  
+Copy the whole name list for this event into `names` (all files, not just the first).
 
-Keep `Name` lined up with `Action`:
+**`| let actions = LLMEventData.AccessedResources[*].Action`**  
+Same for actions (`Read`, `Create`, `Modify`) in the **same order** as `names`. File 1’s action is slot 1, file 2’s is slot 2.
 
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources[*].Name = *
-| let names = LLMEventData.AccessedResources[*].Name
-| let actions = LLMEventData.AccessedResources[*].Action
-| let pair = names.zip(actions, func(n, a) -> format("%s||%s", n, a))
-| let row = pair.expand()
-| columns timestamp, row
-| sort -timestamp
-| limit 200
-```
+**`| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))`**  
+Walk both lists together. Each file becomes one string, `FileName~~~Action`. `zip` is what keeps name and action on the same file. `~~~` is only glue. Do not use `||` here: `|` is regex, and `split` would chop the string into letters.
 
-If `names` is a string, wrap both in `array_from_json(...)` before `zip`.
+**`| let row = pair.expand()`**  
+Turn that list into **one result row per file**. A prompt that touched five files becomes five rows. Same timestamp, five names. Empty lists drop the event.
 
-A five-file prompt should produce **five rows**. After `expand()`, `count()` is files, not Copilot turns.
+**`| let parts = row.split('~~~')`**  
+Break the glued string into two pieces: `[FileName, Action]`.
 
-`split('||')` is a regex split. `|` means OR, so `||` splits the string into **single characters**. First piece is empty (S1 shows `-`). Second piece is one letter, which is why Action looked random.
+**`| let FileName = parts.get(0)`**  
+First piece → `FileName`.
 
-Use a delimiter that is not a regex metacharacter:
+**`| let Action = parts.get(1)`**  
+Second piece → `Action`.
 
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources[*].Name = *
-| let names = LLMEventData.AccessedResources[*].Name
-| let actions = LLMEventData.AccessedResources[*].Action
-| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
-| let row = pair.expand()
-| let parts = row.split('~~~')
-| let FileName = parts.get(0)
-| let Action = parts.get(1)
-| columns timestamp, FileName, Action
-| sort -timestamp
-| limit 200
-```
+**`| filter FileName = *`**  
+Drop rows where `FileName` is missing.
 
-If `get` fails, use `array_get(parts, 0)` and `array_get(parts, 1)`.
+**`| filter !isempty(FileName)`**  
+Drop rows where it is present but blank (`""`).
 
-Do not put `|` in the delimiter. Do not `expand()` `names` and `actions` on separate lines; that cross-joins them.
+**`| filter !(FileName = 'null')`**  
+Drop rows where the value is the text `null` (not the same as a missing field).
 
+**`| columns timestamp, FileName, Action`**  
+Show only those three columns. After `columns`, other fields are gone.
 
-Filter **after** `FileName` is created. `FileName = *` keeps rows where that field is present; `isempty` drops empty strings that S1 still paints as null.
+**`| sort -timestamp`**  
+Newest first. `-` is descending.
+
+**`| limit 200`**  
+Safety cap we used while testing so Event Search would not try to render a huge explode. **Not required** for a 24-hour review. Remove it:
 
 ```
 tag != 'logVolume'
@@ -90,7 +66,16 @@ LLMEventData.AccessedResources[*].Name = *
 | filter !(FileName = 'null')
 | columns timestamp, FileName, Action
 | sort -timestamp
-| limit 200
 ```
 
-If a few rows still show `-`, they are the literal dash, not null. Add `| filter !(FileName = '-')`.
+Set the picker to 24 hours. Do not put a time expression in the query; the UI already applies it.
+
+If you only need totals in that day, skip the row list:
+
+```
+...same lines through the FileName filters...
+| group n=count() by FileName, Action
+| sort -n
+```
+
+That is smaller and will not hit the row cap as fast.
