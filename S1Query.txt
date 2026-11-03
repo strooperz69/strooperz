@@ -216,6 +216,31 @@ If `App` is empty, open one event and put the real field in the `let App =` line
 
 `n` = how many times that app grounded on that name. `files` = how many different names that app touched. Use `files` when you want “count of files,” `n` when you want “count of accesses.”
 
+Same file explode as the AppIdentity query. `City` and `CountryCode` sit on the **event**, so they copy onto every file row. Do not put `= *` inside `let`.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let FileName = names.expand()
+| let City = CloudAppEvents.City
+| let Country = CloudAppEvents.CountryCode
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter !isempty(City)
+| filter !isempty(Country)
+| group n=count(), files=estimate_distinct(FileName) by City, Country
+| sort -n
+```
+
+`n` = file-access events from that city/country. `files` = distinct names. Time picker still sets the window.
+
+If `City` / `Country` come back empty, the parser may have flattened them (`City`, `unmapped.City`). Open one event and put the exact names in the two `let` lines.
+
+To keep rows with a country but no city, drop `| filter !isempty(City)`.
+
 
 
 
