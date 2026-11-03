@@ -179,6 +179,41 @@ Add keywords with another `OR FileName contains 'FOUO'`. If the marking lives in
 
 This is **name-based**. It does not read Purview `SensitivityLabelId`. A CUI file named `Q3-budget.xlsx` will not hit until you join labels.
 
+`AppIdentity` is on the **prompt**, not on each file. After `expand()`, every file row keeps that prompt’s app (`BizChat`, Word, Security Copilot, Studio, and so on). Grouping on it does not split one file the way grouping on user does. `n` is Copilot file-access events. `files` is distinct names.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
+| let row = pair.expand()
+| let parts = row.split('~~~')
+| let FileName = parts.get(0)
+| let Action = parts.get(1)
+| let App = (AppIdentity = * ? AppIdentity : (LLMEventData.AppIdentity = * ? LLMEventData.AppIdentity : unmapped.AppIdentity))
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter App = *
+| group n=count(), files=estimate_distinct(FileName) by App
+| sort -n
+```
+
+Event Search picker still sets the window (24h). No `| limit` unless you only want the top N apps.
+
+If `App` is empty, open one event and use the exact field you see, then put that name in the `let App =` line.
+
+**Per app and file** (which files each host used):
+
+```
+| group n=count() by App, FileName
+| sort -n
+```
+
+`n` = how many times that app grounded on that name. `files` = how many different names that app touched. Use `files` when you want “count of files,” `n` when you want “count of accesses.”
+
 
 
 
