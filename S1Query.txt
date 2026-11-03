@@ -179,34 +179,36 @@ Add keywords with another `OR FileName contains 'FOUO'`. If the marking lives in
 
 This is **name-based**. It does not read Purview `SensitivityLabelId`. A CUI file named `Q3-budget.xlsx` will not hit until you join labels.
 
-`AppIdentity` is on the **prompt**, not on each file. After `expand()`, every file row keeps that prompt’s app (`BizChat`, Word, Security Copilot, Studio, and so on). Grouping on it does not split one file the way grouping on user does. `n` is Copilot file-access events. `files` is distinct names.
+The broken piece is not `AccessedResources[*].Name`. That wildcard is unchanged from the queries that already work.
+
+The new line was:
+
+```
+| let App = (AppIdentity = * ? AppIdentity : (LLMEventData.AppIdentity = * ? ...
+```
+
+`= *` means “field is present.” That is legal in the **first** filter (and you got away with it on `| filter FileName = *`). Inside `let` / `? :`, S1 treats `*` the same way as `| columns *` and throws **doesn't understand [*], try enclosing in quotes**. The `[*]` in the error is that presence star, not the array wildcard.
+
+You also do not need `Action` or `zip` for this count. Explode names only, then take `AppIdentity` from the parent event (it copies onto every file row).
 
 ```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
 LLMEventData.AccessedResources[*].Name = *
 | let names = LLMEventData.AccessedResources[*].Name
-| let actions = LLMEventData.AccessedResources[*].Action
-| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
-| let row = pair.expand()
-| let parts = row.split('~~~')
-| let FileName = parts.get(0)
-| let Action = parts.get(1)
-| let App = (AppIdentity = * ? AppIdentity : (LLMEventData.AppIdentity = * ? LLMEventData.AppIdentity : unmapped.AppIdentity))
+| let FileName = names.expand()
+| let App = AppIdentity ? AppIdentity : LLMEventData.AppIdentity
 | filter FileName = *
 | filter !isempty(FileName)
 | filter !(FileName = 'null')
-| filter App = *
+| filter !isempty(App)
 | group n=count(), files=estimate_distinct(FileName) by App
 | sort -n
 ```
 
-Event Search picker still sets the window (24h). No `| limit` unless you only want the top N apps.
+If `App` is empty, open one event and put the real field in the `let App =` line only, for example `unmapped.AppIdentity`. Do not write `= *` inside `let`.
 
-If `App` is empty, open one event and use the exact field you see, then put that name in the `let App =` line.
-
-**Per app and file** (which files each host used):
-
+`n` = file-access events per app. `files` = distinct file names per app. Time picker still sets the window.
 ```
 | group n=count() by App, FileName
 | sort -n
