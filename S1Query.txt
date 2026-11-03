@@ -1,24 +1,15 @@
-Zero rows is `expand()` dropping the event. That happens when `json_object_value(message, 'LLMEventData')` returns nothing. On this source `LLMEventData` is already a **parsed object** (`{` in the UI). It is not a key you peel out of `message`. The Operation filter can also wipe the set if those scalars are not on `Microsoft Copilot`.
+That flatten is the S1 event viewer, not a queryable list of columns.
 
-Run these in order. Stop at the first one that returns rows.
+Five files are **`[0]` through `[4]`**. There is no `AccessedResources[5]` for a five-file event unless the parser is 1-based (unusual). `LLMEventData.AccessedResources.Name` is the UI showing **index 0** only.
 
-**1. Prove the parsed file field exists**
+PowerQuery will not walk `[0]`, `[1]`, `[2]`. Bracket indexes are rejected in `columns` / `group` / filters. Quoting the name does not help; S1 treats the quoted string as a literal.
 
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources.Name = *
-| group n=count()
-```
-
-If this is 0, the path is `unmapped.LLMEventData.AccessedResources.Name` or `CopilotEventData` instead. Try the same count on those names.
-
-**2. Explode the parsed array (not `message`)**
+Treat **`LLMEventData.AccessedResources` as the array** and explode it:
 
 ```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources.Name = *
+LLMEventData.AccessedResources = *
 | let files = LLMEventData.AccessedResources
 | let file = files.expand()
 | let FileName = json_object_value(file, 'Name')
@@ -30,35 +21,26 @@ LLMEventData.AccessedResources.Name = *
 | limit 200
 ```
 
-**3. If 2 is still 0, the array is a JSON string**
+If `expand()` errors because that parent is not a real array, pull every `Name`/`Action` out of `message` (this does not use `[#]`):
 
 ```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
 LLMEventData.AccessedResources.Name = *
-| let files = array_from_json(LLMEventData.AccessedResources)
-| let file = files.expand()
-| let FileName = json_object_value(file, 'Name')
-| let Action = json_object_value(file, 'Action')
-| let SiteUrl = json_object_value(file, 'SiteUrl')
-| columns timestamp, FileName, Action, SiteUrl
-| sort -timestamp
-| limit 200
-```
-
-**4. If 2 and 3 are 0, pull every `Name` out of the blob**
-
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources.Name = *
-| let names = message.extract_matches('"Name":"([^"]+)"')
-| let FileName = names.expand()
+| let FileName = message.extract_matches('"Name":"([^"]+)"').expand()
 | columns timestamp, FileName
 | sort -timestamp
 | limit 200
 ```
 
-Query 1 should match the volume you already see for “first file only.” Queries 2–4 should return **more** rows than 1 when a prompt touched multiple files.
+Optional check for the alert-style wildcard (returns a JSON array in one cell, not always one row per file):
 
-Do not put `Operation = 'CopilotInteraction'` back in until 1 is non-zero. That filter is what zeroed the last query if this source does not expose `Operation` as a scalar.
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+| group n=count() by files = LLMEventData.AccessedResources[*].Name
+| sort -n
+| limit 50
+```
+
+Do not build `OR ...[0]... OR ...[1]...`. That is the first-file bug with extra indexes, and PQ will not accept the brackets.
