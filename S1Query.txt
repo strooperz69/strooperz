@@ -70,3 +70,27 @@ LLMEventData.AccessedResources[*].Name = *
 If `get` fails, use `array_get(parts, 0)` and `array_get(parts, 1)`.
 
 Do not put `|` in the delimiter. Do not `expand()` `names` and `actions` on separate lines; that cross-joins them.
+
+
+Filter **after** `FileName` is created. `FileName = *` keeps rows where that field is present; `isempty` drops empty strings that S1 still paints as null.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
+| let row = pair.expand()
+| let parts = row.split('~~~')
+| let FileName = parts.get(0)
+| let Action = parts.get(1)
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| columns timestamp, FileName, Action
+| sort -timestamp
+| limit 200
+```
+
+If a few rows still show `-`, they are the literal dash, not null. Add `| filter !(FileName = '-')`.
