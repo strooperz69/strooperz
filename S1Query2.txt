@@ -1,0 +1,135 @@
+Shadow AI in this lake is three different problems. **`Microsoft Copilot` will not see ChatGPT.com.** That source only sees Microsoft Copilot, Studio, and Security Copilot. Consumer chat sites, local LLMs, and browser add-ins live on **Netskope** and **SentinelOne**, which already showed up in S1-00a.
+
+Treat “sanctioned” as a short allow list you maintain: approved `AppIdentity` values, licensed `ActorName`s, SOC roster for Security Copilot, approved Studio `AgentId`s. Everything else is the hunt.
+
+---
+
+### 1. Shadow Copilot (same source you just finished)
+
+**Unknown or extra hosts.** BizChat vs Word vs Bing vs Studio vs Security Copilot. Anything not on the allow list is shadow Copilot.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+| let App = AppIdentity ? AppIdentity : LLMEventData.AppIdentity
+| filter !isempty(App)
+| group n=count(), users=array_agg_distinct(ActorName, 20) by App
+| sort -n
+```
+
+**Studio / custom agents** (not in the approved catalog):
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+(AppIdentity contains 'Studio' OR LLMEventData.AppIdentity contains 'Studio' OR * contains 'CopilotStudio')
+| group n=count() by AppIdentity, ActorName
+| sort -n
+```
+
+**Web grounding** (data leaving the tenant graph). Only after you confirm `AppHost` / `BingWebSearch` exist, same way you confirmed `ActorName`:
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+(* contains 'BingWebSearch' OR LLMEventData.AppHost contains 'Bing')
+| group n=count() by ActorName
+| sort -n
+```
+
+**CUI-named files through a host that is not Word/BizChat** (marking in the name, not Purview labels):
+
+Use the keyword explode you already have, keep `App` and `ActorName`, then:
+
+```
+| group n=count() by ActorName, FileName, App
+| sort -n
+```
+
+**Copilot from odd IPs** (home, hotel, unexpected egress):
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let FileName = names.expand()
+| let IP = RawEventData.ClientIP
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !isempty(IP)
+| group n=count(), files=estimate_distinct(FileName), users=array_agg_distinct(ActorName, 20) by IP
+| sort -n
+```
+
+Compare `IP` to your known GCC High egress. Do not guess CIDRs in the query until you have that list.
+
+**People using Copilot who should not** (no license / not the AI group): export `ActorName` vs the license group offline, or an S1 lookup once you load that list. Same pattern as `soc_roster`.
+
+---
+
+### 2. Shadow web AI (Netskope)
+
+This is where ChatGPT, Claude, Gemini, Poe, Perplexity, character.ai, and “ChatGPT” wrappers show up. Field names on **your** Netskope source are not proven. Discover first, same method as Copilot:
+
+```
+tag != 'logVolume'
+dataSource.name = 'Netskope'
+(* contains 'chatgpt' OR * contains 'openai' OR * contains 'claude.ai' OR * contains 'anthropic' OR * contains 'gemini.google' OR * contains 'perplexity' OR * contains 'poe.com' OR * contains 'copilot.microsoft' OR * contains 'grok')
+| group n=count() by dataSource.name
+```
+
+If `n` is 0, the names are not in indexed fields. Open one Netskope event and note the URL / app / user fields, then group on those. Do not copy `CloudAppEvents.*` in here. That already failed on Copilot.
+
+Once you have the URL field (example name only, replace after you look):
+
+```
+tag != 'logVolume'
+dataSource.name = 'Netskope'
+(url contains 'chatgpt.com' OR url contains 'claude.ai' OR app contains 'ChatGPT')
+| group n=count() by user, app, url
+| sort -n
+| limit 50
+```
+
+Use the real field names from the event. High-value twist: same user hits **CUI-named Copilot files** and **chatgpt.com** in the same window. That is two queries plus an offline join on username until you have a lookup.
+
+---
+
+### 3. Shadow local AI (SentinelOne EDR)
+
+Browser-only ChatGPT will not always have a unique process. Local models will: Ollama, LM Studio, GPT4All, Jan, llama.cpp, “ChatGPT” / “Claude” desktop.
+
+Discover the process field on `dataSource.name = 'SentinelOne'`, then hunt names you actually see. Starter filter (process field TBD):
+
+```
+tag != 'logVolume'
+dataSource.name = 'SentinelOne'
+(
+  * contains 'ollama'
+  OR * contains 'lmstudio'
+  OR * contains 'gpt4all'
+  OR * contains 'llama.cpp'
+  OR * contains 'claude.exe'
+)
+| group n=count() by dataSource.name
+```
+
+`LinuxBind` is unproven. If it is DNS, the same domain list as Netskope belongs there. Run `dataSource.name = 'LinuxBind' | limit 1` and read the message. Do not assume it is DNS until you see queries.
+
+---
+
+### What to schedule vs hunt
+
+| Question | Source | Mode |
+|---|---|---|
+| New `AppIdentity` not on the allow list | Microsoft Copilot | Weekly report, then alert |
+| Studio / `Copilot.Studio` | Microsoft Copilot | Alert unknown AgentId |
+| Bing / BingWebSearch if web is off | Microsoft Copilot | Hunt, then alert |
+| CUI/CHRI/SPI/AMBER in file name | Microsoft Copilot | Weekly GRC |
+| ChatGPT/Claude/Gemini in CASB | Netskope | Alert after fields are proven |
+| Ollama / LM Studio on endpoints | SentinelOne | Alert after process field is proven |
+
+Do not put ChatGPT detections on `Microsoft Copilot`. You will get a clean zero and a false pass.
+
+First shadow-AI pass this week: run the **AppIdentity inventory**, save the `App` values, mark which ones are approved. That list is the allow list every later Copilot shadow query subtracts from.
