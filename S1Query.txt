@@ -1,46 +1,48 @@
-That flatten is the S1 event viewer, not a queryable list of columns.
+`[*]` is the only accessor PowerQuery accepts on that flattened array. `[0]`, `[5]`, and the unindexed `.Name` path are display keys, not query fields.
 
-Five files are **`[0]` through `[4]`**. There is no `AccessedResources[5]` for a five-file event unless the parser is 1-based (unusual). `LLMEventData.AccessedResources.Name` is the UI showing **index 0** only.
+`group by LLMEventData.AccessedResources[*].Name` still usually returns **one cell per event**, JSON-wrapped, like `["a.docx","b.docx"]`. It is not one row per file yet.
 
-PowerQuery will not walk `[0]`, `[1]`, `[2]`. Bracket indexes are rejected in `columns` / `group` / filters. Quoting the name does not help; S1 treats the quoted string as a literal.
-
-Treat **`LLMEventData.AccessedResources` as the array** and explode it:
+Explode that wildcard into rows:
 
 ```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources = *
-| let files = LLMEventData.AccessedResources
-| let file = files.expand()
-| let FileName = json_object_value(file, 'Name')
-| let Action = json_object_value(file, 'Action')
-| let SiteUrl = json_object_value(file, 'SiteUrl')
-| let FileType = json_object_value(file, 'Type')
-| columns timestamp, FileName, Action, FileType, SiteUrl
-| sort -timestamp
-| limit 200
-```
-
-If `expand()` errors because that parent is not a real array, pull every `Name`/`Action` out of `message` (this does not use `[#]`):
-
-```
-tag != 'logVolume'
-dataSource.name = 'Microsoft Copilot'
-LLMEventData.AccessedResources.Name = *
-| let FileName = message.extract_matches('"Name":"([^"]+)"').expand()
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let FileName = names.expand()
 | columns timestamp, FileName
 | sort -timestamp
 | limit 200
 ```
 
-Optional check for the alert-style wildcard (returns a JSON array in one cell, not always one row per file):
+If `FileName` is still a JSON array string, parse then explode:
 
 ```
 tag != 'logVolume'
 dataSource.name = 'Microsoft Copilot'
-| group n=count() by files = LLMEventData.AccessedResources[*].Name
-| sort -n
-| limit 50
+LLMEventData.AccessedResources[*].Name = *
+| let names = array_from_json(LLMEventData.AccessedResources[*].Name)
+| let FileName = names.expand()
+| columns timestamp, FileName
+| sort -timestamp
+| limit 200
 ```
 
-Do not build `OR ...[0]... OR ...[1]...`. That is the first-file bug with extra indexes, and PQ will not accept the brackets.
+Keep `Name` lined up with `Action`:
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s||%s", n, a))
+| let row = pair.expand()
+| columns timestamp, row
+| sort -timestamp
+| limit 200
+```
+
+If `names` is a string, wrap both in `array_from_json(...)` before `zip`.
+
+A five-file prompt should produce **five rows**. After `expand()`, `count()` is files, not Copilot turns.
