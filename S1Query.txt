@@ -241,6 +241,30 @@ If `City` / `Country` come back empty, the parser may have flattened them (`City
 
 To keep rows with a country but no city, drop `| filter !isempty(City)`.
 
+Same explode, group by client IP. The field you named is `CloudAppEvents.IPAdress` (one `d`). If the column is empty, the parser may use `IPAddress`.
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let FileName = names.expand()
+| let IP = CloudAppEvents.IPAdress
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter !isempty(IP)
+| group n=count(), files=estimate_distinct(FileName) by IP
+| sort -n
+```
+
+If `IP` is empty, change the `let` to:
+
+```
+| let IP = CloudAppEvents.IPAddress
+```
+
+`n` = file-access events from that IP. `files` = distinct names. Time picker still sets the window.
 
 
 
