@@ -296,4 +296,35 @@ If `User` is empty, open one event and put that field in `let User =` (`RawEvent
 
 Use the first query to read the story. Use the `group` query when you only need counts.
 
+`ActorName` stays a parent field. `Action` comes from the same `AccessedResources` slot as the file, so zip those two again (not `||`).
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
+| let row = pair.expand()
+| let parts = row.split('~~~')
+| let FileName = parts.get(0)
+| let Action = parts.get(1)
+| let App = AppIdentity ? AppIdentity : LLMEventData.AppIdentity
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter !isempty(ActorName)
+| filter !isempty(App)
+| columns timestamp, ActorName, FileName, Action, App
+| sort -timestamp
+```
+
+Time picker sets the window.
+
+**Counts per person / file / action / app:**
+
+```
+| group n=count() by ActorName, FileName, Action, App
+| sort -n
+```
 
