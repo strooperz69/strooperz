@@ -122,6 +122,63 @@ Same file can appear more than once, once per action.
 
 **Name collision:** `Document1.docx` in two sites counts as one file. If you need that split, zip `SiteUrl` in as a third `~~~` piece (`get(2)`) and `group n=count() by FileName, SiteUrl`.
 
+Filter **after** `FileName` exists. If you put `CUI` on the raw event, you miss files that are not the first `[0]` name and you hit prompts that only mention the word in JSON.
+
+This is still “Copilot accessed this file.” Adding the user does **not** split the file rank if you only `group` by `FileName`. The list query below is one row per access (file + user + action). The second query is unique files, with users attached.
+
+Use the Event Search 24-hour picker. Swap `UserId` if that column is empty (`unmapped.UserId` or `ActorName`).
+
+**Matching accesses (file, user, action)**
+
+```
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+LLMEventData.AccessedResources[*].Name = *
+| let names = LLMEventData.AccessedResources[*].Name
+| let actions = LLMEventData.AccessedResources[*].Action
+| let pair = names.zip(actions, func(n, a) -> format("%s~~~%s", n, a))
+| let row = pair.expand()
+| let parts = row.split('~~~')
+| let FileName = parts.get(0)
+| let Action = parts.get(1)
+| let User = (UserId = * ? UserId : unmapped.UserId)
+| filter FileName = *
+| filter !isempty(FileName)
+| filter !(FileName = 'null')
+| filter (
+    FileName contains 'CUI'
+    OR FileName contains 'CHRI'
+    OR FileName contains 'SPI'
+    OR FileName contains 'AMBER'
+    OR FileName contains 'CUI//'
+    OR FileName contains 'CUI/'
+  )
+| columns timestamp, User, FileName, Action
+| sort -timestamp
+```
+
+**Same hits, rolled up (which of those files Copilot used most)**
+
+Replace the last three lines with:
+
+```
+| group n=count(), users=array_agg_distinct(User, 20) by FileName
+| sort -n
+```
+
+`contains` is case-insensitive (`cui` matches `CUI`). Short tokens, especially **SPI**, will match inside longer names (`Hospital` does not, but `DISPIRIT` / `SPIFF` would). If that noise shows up, switch those lines to a word-style regex, with S1’s double backslashes:
+
+```
+FileName matches '\\bCUI\\b'
+OR FileName matches '\\bCHRI\\b'
+OR FileName matches '\\bSPI\\b'
+OR FileName matches '\\bAMBER\\b'
+```
+
+Add keywords with another `OR FileName contains 'FOUO'`. If the marking lives in the path instead of the title, zip `SiteUrl` as a third `~~~` piece and run the same `contains` on that field too.
+
+This is **name-based**. It does not read Purview `SensitivityLabelId`. A CUI file named `Q3-budget.xlsx` will not hit until you join labels.
+
 
 
 
