@@ -1,0 +1,26 @@
+tag != 'logVolume'
+dataSource.name = 'Microsoft Copilot'
+(Operation = 'CopilotInteraction' OR unmapped.Operation = 'CopilotInteraction' OR RecordType = 261 OR unmapped.RecordType = 261)
+message contains 'AccessedResources'
+| let llm = json_object_value(message, 'LLMEventData')
+| let files = json_object_value(llm, 'AccessedResources')
+| let file = files.expand()
+| let FileName = json_object_value(file, 'Name')
+| let Action = json_object_value(file, 'Action')
+| let SiteUrl = json_object_value(file, 'SiteUrl')
+| let FileType = json_object_value(file, 'Type')
+| let FileId = json_object_value(file, 'ID')
+| let LabelId = json_object_value(file, 'SensitivityLabelId')
+| columns timestamp, UserId, FileName, Action, FileType, SiteUrl, FileId, LabelId
+| sort -timestamp
+| limit 500
+
+If llm is empty, LLMEventData is already a parsed field. Use that instead of message:
+
+| let files = json_object_value(LLMEventData, 'AccessedResources')
+| let file = files.expand()
+
+If FileId is empty, the JSON key is Id not ID. Retry that one json_object_value.
+Writes:
+
+| filter Action = 'Create' OR Action = 'Modify' OR Action contains 'Write'
