@@ -1,0 +1,69 @@
+The right Purview record for **labeled mail in transit** is **MipLabel** (UAL `RecordType` 43): `Sender`, `Receivers[]`, `LabelName`, `LabelId`. A mailbox `Send` event often has **no** label, so it will not give this breakdown.
+
+This is **not** the `Microsoft Copilot` source. Find the audit source first (likely `Azure` or another M365 name), then run the count.
+
+**1. Find the source**
+
+```
+tag != 'logVolume'
+dataSource.name = *
+(* contains 'MipLabel' OR * contains 'LabelName' OR RecordType = 43 OR unmapped.RecordType = 43)
+| group n=count() by dataSource.name
+| sort -n
+```
+
+Put that `dataSource.name` in the query below. If the only row is null, those are S1 search-audit rows, not mail.
+
+**2. External recipients, count by label**
+
+One labeled message to five outside addresses becomes five rows if you explode `Receivers`. `n` is **external recipient hits**. `messages` is **distinct emails** (use that for “how many messages left the company”).
+
+```
+tag != 'logVolume'
+dataSource.name = 'Azure'
+(RecordType = 43 OR unmapped.RecordType = 43 OR Operation = 'MipLabel')
+| let recips = RawEventData.Receivers[*]
+| let Recipient = recips.expand()
+| let Label = RawEventData.LabelName ? RawEventData.LabelName : LabelName
+| filter !isempty(Recipient)
+| filter !(Recipient matches '@gdeb\\.com$')
+| group n=count(), messages=estimate_distinct(RawEventData.ItemName) by Label
+| sort -n
+```
+
+`matches '@gdeb\\.com$'` is “address ends with `@gdeb.com`” (case-insensitive). Internal `user@gdeb.com` is dropped. `contractor@notgdeb.com` is kept. If you also treat `@gdeb.us` as internal, add:
+
+```
+| filter !(Recipient matches '@gdeb\\.com$' OR Recipient matches '@gdeb\\.us$')
+```
+
+**If `recips.expand()` is empty**, the array is a string. Use the same pattern that worked on Copilot names:
+
+```
+| let recips = RawEventData.Receivers[*]
+```
+
+or open one MipLabel event and copy the real path (`Receivers[*]`, `unmapped.Receivers[*]`, `RawEventData.Receivers`).
+
+**If `Label` is empty**, the GUID is there and the name is not. Group by `RawEventData.LabelId` and map GUIDs with `Get-Label` in Exchange Online PowerShell.
+
+**3. Sender + label + external recipient** (same grain as your Copilot user/file/app list)
+
+```
+tag != 'logVolume'
+dataSource.name = 'Azure'
+(RecordType = 43 OR unmapped.RecordType = 43 OR Operation = 'MipLabel')
+| let recips = RawEventData.Receivers[*]
+| let Recipient = recips.expand()
+| let Label = RawEventData.LabelName ? RawEventData.LabelName : LabelName
+| let Sender = RawEventData.Sender ? RawEventData.Sender : ActorName
+| filter !isempty(Recipient)
+| filter !(Recipient matches '@gdeb\\.com$')
+| filter !isempty(Label)
+| columns timestamp, Sender, Recipient, Label
+| sort -timestamp
+```
+
+Time picker still sets the window. Do not put `= *` inside `let`.
+
+Unlabeled outbound mail will **not** appear here. That is a different event (`Operation = 'Send'`, ExchangeItem). Say if you want that as an “Unlabeled” bucket.
