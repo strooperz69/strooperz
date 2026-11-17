@@ -1,0 +1,77 @@
+1. Find where the admin events actually are
+
+tag != 'logVolume'
+dataSource.name = *
+(
+  * contains 'UpdateCopilotSettings'
+  OR * contains 'EnableCopilotPlugin'
+  OR * contains 'CreateCopilotPlugin'
+  OR * contains 'CopilotAgentManagement'
+  OR * contains 'Consent to application'
+  OR RecordType = 325
+  OR unmapped.RecordType = 325
+)
+| group n=count() by dataSource.name
+| sort -n
+
+2. Copilot admin: settings, plugins, workspaces, promptbooks, agents (alert any hit)
+
+tag != 'logVolume'
+dataSource.name = 'Azure'
+(
+  RecordType in (310,311,312,313,314,315,316,317,318,319,320,321,322,323,324,325,383,384)
+  OR unmapped.RecordType in (310,311,312,313,314,315,316,317,318,319,320,321,322,323,324,325,383,384)
+  OR Operation contains 'CopilotPlugin'
+  OR unmapped.Operation contains 'CopilotPlugin'
+  OR Operation = 'UpdateCopilotSettings'
+  OR unmapped.Operation = 'UpdateCopilotSettings'
+  OR Operation contains 'CopilotWorkspace'
+  OR Operation contains 'CopilotPromptBook'
+  OR Operation contains 'CopilotAgent'
+  OR * contains 'UpdateTenantSettings'
+)
+| let Actor = ActorName ? ActorName : (UserId ? UserId : unmapped.UserId)
+| let Op = Operation ? Operation : unmapped.Operation
+| let RT = RecordType ? RecordType : unmapped.RecordType
+| filter !isempty(Op)
+| group n=count() by Op, RT, Actor
+| sort -n
+
+Detail list (same filter, no group):
+
+| let Actor = ActorName ? ActorName : (UserId ? UserId : unmapped.UserId)
+| let Op = Operation ? Operation : unmapped.Operation
+| let RT = RecordType ? RecordType : unmapped.RecordType
+| columns timestamp, Actor, Op, RT
+| sort -timestamp
+
+3. Apps getting connected (Entra consent / app roles)
+
+tag != 'logVolume'
+dataSource.name = 'Azure'
+(
+  * contains 'Consent to application'
+  OR * contains 'Add delegated permission grant'
+  OR * contains 'Add app role assignment'
+  OR * contains 'Add service principal'
+)
+(
+  * contains 'Copilot'
+  OR * contains 'CopilotStudio'
+  OR * contains 'ActivityFeed.Read'
+  OR * contains 'Chat.Read'
+  OR * contains 'Files.Read.All'
+)
+| let Actor = ActorName ? ActorName : (UserId ? UserId : unmapped.UserId)
+| let Op = Operation ? Operation : (activityDisplayName ? activityDisplayName : unmapped.activityDisplayName)
+| columns timestamp, Actor, Op
+| sort -timestamp
+
+4. Connected third-party AI already in the tenant (usage, not the grant)
+
+tag != 'logVolume'
+dataSource.name = 'Azure'
+(RecordType = 328 OR unmapped.RecordType = 328 OR Operation contains 'ConnectedAIApp')
+| group n=count() by ActorName, Operation
+| sort -n
+
